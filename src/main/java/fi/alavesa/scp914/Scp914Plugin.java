@@ -24,6 +24,7 @@ public final class Scp914Plugin extends JavaPlugin {
     private RecipeStore recipes;
     private MachineManager machines;
     private RecipeUi ui;
+    private PlayerEffects playerEffects;
 
     @Override
     public void onEnable() {
@@ -44,12 +45,16 @@ public final class Scp914Plugin extends JavaPlugin {
         recipes.load();
         machines = new MachineManager(this);
         ui = new RecipeUi(this);
+        playerEffects = new PlayerEffects(this);
         getServer().getPluginManager().registerEvents(ui, this);
+        getServer().getPluginManager().registerEvents(playerEffects, this);
         getServer().getScheduler().runTaskTimer(this, machines::tickMachines, 40L, 10L);
+        getServer().getScheduler().runTaskTimer(this, playerEffects::tick, 60L, 20L);
         getLogger().info("Scp914 enabled");
     }
 
     public RecipeStore recipes() { return recipes; }
+    public PlayerEffects playerEffects() { return playerEffects; }
     public MachineManager machines() { return machines; }
     public NamespacedKey key(String name) { return new NamespacedKey(this, name); }
 

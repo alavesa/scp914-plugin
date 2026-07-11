@@ -373,11 +373,8 @@ public final class MachineManager {
         for (Entity entity : at.getWorld().getNearbyEntities(intake, 1.3, 1.3, 1.3)) {
             if (entity instanceof Item item) waiting.add(item);
         }
-        if (waiting.isEmpty()) {
-            player.sendActionBar(Component.text("The intake is empty.", NamedTextColor.GRAY, TextDecoration.ITALIC));
-            anchor.getWorld().playSound(intake, Sound.BLOCK_DISPENSER_FAIL, 0.7f, 0.8f);
-            return;
-        }
+        // an empty intake is no obstacle - the machine refines whatever is
+        // inside when the cycle ends, items or otherwise
         Job job = new Job();
         job.doneAt = tick + REFINE_TICKS;
         for (Item item : waiting) {
@@ -432,6 +429,11 @@ public final class MachineManager {
         String settingKey = RecipeStore.SETTINGS[setting];
         Vector outputOffset = rotate(parseVector(pdcString(anchor, "output", "3,0.6,0")), at.getYaw());
         Location output = at.clone().add(outputOffset);
+        // whoever is inside the intake chamber gets refined too
+        Location intake = at.clone().add(rotate(parseVector(pdcString(anchor, "intake", "-3,0.4,0")), at.getYaw()));
+        for (Player inside : new ArrayList<>(intake.getNearbyPlayers(1.4))) {
+            plugin.playerEffects().refine(settingKey, inside, output.clone().add(0, 0.2, 0));
+        }
         for (ItemStack input : job.inputs) {
             ItemStack out = plugin.recipes().refine(settingKey, input);
             at.getWorld().dropItem(output, out, item -> {
