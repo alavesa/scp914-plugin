@@ -27,27 +27,34 @@ import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * The Clockworks in the world. Each machine is an anchor marker carrying its
- * configuration in PDC, plus: the big body display (custom model, live
- * size/offset), a SEPARATE dial display with its own interaction box (so the
- * body model can be animated without five dial variants), and a box of
- * barrier blocks for collision - only ever placed into air, and remembered,
- * so removal restores exactly what was there.
+ * The Clockworks in the world - v2, the SCP:CB flow:
  *
- * Refinement: item entities inside the intake zone are recognized, consumed
- * with a lot of gear noise, and ~4 seconds later the results clatter out of
- * the output booth according to the dial setting.
+ * Two barrier CHAMBERS flank the machine (intake left, output right), open at
+ * the front. Items dropped in the intake chamber just sit there - the machine
+ * takes them only when THE KEY (its own two-state model + interaction box,
+ * separate from body and dial) is turned. Then: key model flips to "turned",
+ * the body model swaps to its doors-closed state, both chamber mouths seal
+ * with temporary barriers, and 15 seconds of machinery later the results
+ * appear in the output chamber and everything reopens.
+ *
+ * On Rough and Coarse, anything without a recipe refines into "Dust".
  */
 public final class MachineManager {
 
     public static final String TAG_ANCHOR = "scp914.anchor";
     public static final String TAG_PART = "scp914.part";
+    public static final String TAG_BODY = "scp914.body";
     public static final String TAG_DIAL = "scp914.dial";
+    public static final String TAG_KEY = "scp914.key";
+
+    private static final int REFINE_TICKS = 15 * 20;
 
     private static final class Job {
         List<ItemStack> inputs = new ArrayList<>();
@@ -80,11 +87,15 @@ public final class MachineManager {
             pdc.set(plugin.key("dial-scale"), PersistentDataType.DOUBLE,
                 plugin.getConfig().getDouble("dial.scale", 1.0));
             pdc.set(plugin.key("dial-offset"), PersistentDataType.STRING,
-                plugin.getConfig().getString("dial.offset", "0,1.0,1.9"));
+                plugin.getConfig().getString("dial.offset", "-0.9,1.0,1.9"));
+            pdc.set(plugin.key("key-scale"), PersistentDataType.DOUBLE,
+                plugin.getConfig().getDouble("key.scale", 1.0));
+            pdc.set(plugin.key("key-offset"), PersistentDataType.STRING,
+                plugin.getConfig().getString("key.offset", "0.9,1.0,1.9"));
             pdc.set(plugin.key("intake"), PersistentDataType.STRING,
-                plugin.getConfig().getString("intake", "-2.6,0.4,0"));
+                plugin.getConfig().getString("intake", "-3,0.4,0"));
             pdc.set(plugin.key("output"), PersistentDataType.STRING,
-                plugin.getConfig().getString("output", "2.6,0.6,0"));
+                plugin.getConfig().getString("output", "3,0.6,0"));
         });
         spawnParts(anchor);
         fillBarriers(anchor,
@@ -92,7 +103,8 @@ public final class MachineManager {
             plugin.getConfig().getInt("barriers.height", 3),
             plugin.getConfig().getInt("barriers.depth", 3));
         player.sendMessage(Component.text(
-            "SCP-914 assembled. The dial is at 1:1 - click it to change settings.", NamedTextColor.AQUA));
+            "SCP-914 assembled: intake chamber left, output right. Set the dial, drop items in, turn the key.",
+            NamedTextColor.AQUA));
     }
 
     private void spawnParts(Marker anchor) {
@@ -103,26 +115,37 @@ public final class MachineManager {
         ItemDisplay body = spawnDisplay(anchor, at, Material.SMITHING_TABLE, "scp914_body",
             (float) scale, rotate(offset, at.getYaw()));
         body.addScoreboardTag(TAG_PART);
+        body.addScoreboardTag(TAG_BODY);
 
-        double dialScale = pdcDouble(anchor, "dial-scale", 1.0);
-        Vector dialOffset = rotate(parseVector(pdcString(anchor, "dial-offset", "0,1.0,1.9")), at.getYaw());
-        ItemDisplay dial = spawnDisplay(anchor, at, Material.COMPARATOR, "scp914_dial",
-            (float) dialScale, dialOffset);
-        dial.addScoreboardTag(TAG_PART);
-        dial.addScoreboardTag(TAG_DIAL);
-        Location dialLoc = at.clone().add(dialOffset);
-        Interaction knob = at.getWorld().spawn(dialLoc.clone().subtract(0, 0.4, 0), Interaction.class, i -> {
+        spawnControl(anchor, Material.COMPARATOR, "scp914_dial", TAG_DIAL,
+            pdcDouble(anchor, "dial-scale", 1.0),
+            pdcString(anchor, "dial-offset", "-0.9,1.0,1.9"));
+        spawnControl(anchor, Material.TRIPWIRE_HOOK, "scp914_key", TAG_KEY,
+            pdcDouble(anchor, "key-scale", 1.0),
+            pdcString(anchor, "key-offset", "0.9,1.0,1.9"));
+        applyDialAngle(anchor);
+    }
+
+    /** A small control (dial or key): its own model + its own interaction box. */
+    private void spawnControl(Marker anchor, Material base, String cmd, String tag,
+                              double scale, String offsetCsv) {
+        Location at = anchor.getLocation();
+        Vector offset = rotate(parseVector(offsetCsv), at.getYaw());
+        ItemDisplay display = spawnDisplay(anchor, at, base, cmd, (float) scale, offset);
+        display.addScoreboardTag(TAG_PART);
+        display.addScoreboardTag(tag);
+        Location box = at.clone().add(offset).subtract(0, 0.4, 0);
+        Interaction knob = at.getWorld().spawn(box, Interaction.class, i -> {
             i.setInteractionWidth(0.8f);
             i.setInteractionHeight(0.9f);
             i.setPersistent(true);
             i.addScoreboardTag(TAG_PART);
-            i.addScoreboardTag(TAG_DIAL);
+            i.addScoreboardTag(tag);
             i.getPersistentDataContainer().set(plugin.key("anchor"), PersistentDataType.STRING,
                 anchor.getUniqueId().toString());
         });
         knob.getPersistentDataContainer().set(plugin.key("anchor"), PersistentDataType.STRING,
             anchor.getUniqueId().toString());
-        applyDialAngle(anchor);
     }
 
     private ItemDisplay spawnDisplay(Marker anchor, Location at, Material base, String cmd,
@@ -138,51 +161,146 @@ public final class MachineManager {
                 new Vector3f(scale, scale, scale), new AxisAngle4f(0, 0, 0, 1)));
             display.getPersistentDataContainer().set(plugin.key("anchor"), PersistentDataType.STRING,
                 anchor.getUniqueId().toString());
-            ItemStack item = new ItemStack(base);
-            ItemMeta meta = item.getItemMeta();
-            CustomModelDataComponent component = meta.getCustomModelDataComponent();
-            component.setStrings(List.of(cmd));
-            meta.setCustomModelDataComponent(component);
-            item.setItemMeta(meta);
-            display.setItemStack(item);
+            display.setItemStack(modelItem(base, cmd));
         });
     }
 
-    /** Fill the machine's footprint with barriers - air only, and remembered. */
+    private ItemStack modelItem(Material base, String cmd) {
+        ItemStack item = new ItemStack(base);
+        ItemMeta meta = item.getItemMeta();
+        CustomModelDataComponent component = meta.getCustomModelDataComponent();
+        component.setStrings(List.of(cmd));
+        meta.setCustomModelDataComponent(component);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private void setModelState(Marker anchor, String tag, Material base, String cmd) {
+        for (Entity part : partsOf(anchor)) {
+            if (part instanceof ItemDisplay display && part.getScoreboardTags().contains(tag)) {
+                display.setItemStack(modelItem(base, cmd));
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- barriers
+
+    /**
+     * The collision shell: a solid box under the body, plus two hollow
+     * chambers (intake left, output right) whose mouths open toward the
+     * front. Air-only, remembered exactly. The mouth positions are stored
+     * separately - they get sealed while the machine runs.
+     */
     public void fillBarriers(Marker anchor, int width, int height, int depth) {
         clearBarriers(anchor);
         List<String> placed = new ArrayList<>();
+        List<String> mouths = new ArrayList<>();
         Location base = anchor.getLocation();
-        boolean alongX = isAlongX(base.getYaw());
-        int w = alongX ? width : depth;
-        int d = alongX ? depth : width;
-        for (int dx = -w / 2; dx <= w / 2; dx++) {
+        float yaw = base.getYaw();
+        int halfW = width / 2, halfD = depth / 2;
+
+        Set<String> skip = new HashSet<>(); // chamber interiors stay open
+        for (int side : new int[]{-1, 1}) {
+            int cx = side * (halfW + 1);
+            for (int dy = 0; dy <= 1; dy++) skip.add(cx + "," + dy + ",0");
+        }
+        // central body box
+        for (int dx = -halfW; dx <= halfW; dx++) {
             for (int dy = 0; dy < height; dy++) {
-                for (int dz = -d / 2; dz <= d / 2; dz++) {
-                    Block block = base.clone().add(dx, dy, dz).getBlock();
-                    if (block.getType() == Material.AIR) {
-                        block.setType(Material.BARRIER);
-                        placed.add(block.getX() + "," + block.getY() + "," + block.getZ());
+                for (int dz = -halfD; dz <= halfD; dz++) {
+                    placeBarrier(base, yaw, dx, dy, dz, placed, skip);
+                }
+            }
+        }
+        // the chambers: shell around a 1x2x1 interior, mouth open at front
+        for (int side : new int[]{-1, 1}) {
+            int cx = side * (halfW + 1);
+            for (int dy = 0; dy <= 2; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    for (int ox = 0; ox <= 1; ox++) {
+                        int dx = cx + side * ox;
+                        boolean interior = ox == 0 && dz == 0 && dy <= 1;
+                        boolean mouth = ox == 0 && dz == 1 && dy <= 1;
+                        if (interior) continue;
+                        if (mouth) {
+                            mouths.add(worldKey(base, yaw, dx, dy, dz));
+                            continue;
+                        }
+                        placeBarrier(base, yaw, dx, dy, dz, placed, skip);
                     }
                 }
             }
         }
-        anchor.getPersistentDataContainer().set(plugin.key("barriers"),
-            PersistentDataType.STRING, String.join(";", placed));
+        var pdc = anchor.getPersistentDataContainer();
+        pdc.set(plugin.key("barriers"), PersistentDataType.STRING, String.join(";", placed));
+        pdc.set(plugin.key("mouths"), PersistentDataType.STRING, String.join(";", mouths));
+    }
+
+    private void placeBarrier(Location base, float yaw, int dx, int dy, int dz,
+                              List<String> placed, Set<String> skip) {
+        if (skip.contains(dx + "," + dy + "," + dz)) return;
+        Block block = blockAt(base, yaw, dx, dy, dz);
+        if (block.getType() == Material.AIR) {
+            block.setType(Material.BARRIER);
+            placed.add(block.getX() + "," + block.getY() + "," + block.getZ());
+        }
+    }
+
+    private Block blockAt(Location base, float yaw, int dx, int dy, int dz) {
+        Vector world = rotate(new Vector(dx, dy, dz), yaw);
+        return base.clone().add(Math.round(world.getX()), dy, Math.round(world.getZ())).getBlock();
+    }
+
+    private String worldKey(Location base, float yaw, int dx, int dy, int dz) {
+        Block block = blockAt(base, yaw, dx, dy, dz);
+        return block.getX() + "," + block.getY() + "," + block.getZ();
     }
 
     public void clearBarriers(Marker anchor) {
-        String stored = pdcString(anchor, "barriers", "");
+        removeStoredBarriers(anchor, "barriers");
+        removeStoredBarriers(anchor, "seals");
+        anchor.getPersistentDataContainer().remove(plugin.key("mouths"));
+    }
+
+    private void removeStoredBarriers(Marker anchor, String key) {
+        String stored = pdcString(anchor, key, "");
         if (stored.isEmpty()) return;
         World world = anchor.getWorld();
         for (String entry : stored.split(";")) {
+            if (entry.isEmpty()) continue;
             String[] parts = entry.split(",");
             Block block = world.getBlockAt(Integer.parseInt(parts[0]),
                 Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
             if (block.getType() == Material.BARRIER) block.setType(Material.AIR);
         }
-        anchor.getPersistentDataContainer().remove(plugin.key("barriers"));
+        anchor.getPersistentDataContainer().remove(plugin.key(key));
     }
+
+    /** Seal both chamber mouths for the duration of a run. */
+    private void sealChambers(Marker anchor) {
+        String stored = pdcString(anchor, "mouths", "");
+        if (stored.isEmpty()) return;
+        List<String> placed = new ArrayList<>();
+        World world = anchor.getWorld();
+        for (String entry : stored.split(";")) {
+            if (entry.isEmpty()) continue;
+            String[] parts = entry.split(",");
+            Block block = world.getBlockAt(Integer.parseInt(parts[0]),
+                Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+            if (block.getType() == Material.AIR) {
+                block.setType(Material.BARRIER);
+                placed.add(entry);
+            }
+        }
+        anchor.getPersistentDataContainer().set(plugin.key("seals"),
+            PersistentDataType.STRING, String.join(";", placed));
+    }
+
+    private void unsealChambers(Marker anchor) {
+        removeStoredBarriers(anchor, "seals");
+    }
+
+    // ------------------------------------------------------------- removal
 
     public int remove(Location near) {
         int removed = 0;
@@ -191,6 +309,7 @@ public final class MachineManager {
             if (anchor.getLocation().distanceSquared(near) > 64) continue;
             clearBarriers(anchor);
             for (Entity part : partsOf(anchor)) part.remove();
+            jobs.remove(anchor.getUniqueId());
             anchor.remove();
             removed++;
         }
@@ -200,7 +319,7 @@ public final class MachineManager {
     public List<Entity> partsOf(Marker anchor) {
         List<Entity> parts = new ArrayList<>();
         String id = anchor.getUniqueId().toString();
-        for (Entity entity : anchor.getWorld().getNearbyEntities(anchor.getLocation(), 12, 12, 12)) {
+        for (Entity entity : anchor.getWorld().getNearbyEntities(anchor.getLocation(), 14, 14, 14)) {
             String owner = entity.getPersistentDataContainer().get(plugin.key("anchor"), PersistentDataType.STRING);
             if (id.equals(owner)) parts.add(entity);
         }
@@ -218,19 +337,21 @@ public final class MachineManager {
         return best;
     }
 
-    // ------------------------------------------------------------- the dial
+    // ------------------------------------------------------------- controls
 
     public void cycleDial(Player player, Marker anchor) {
+        if (jobs.containsKey(anchor.getUniqueId())) {
+            player.sendActionBar(Component.text("The machine is running.", NamedTextColor.GRAY, TextDecoration.ITALIC));
+            return;
+        }
         int setting = (pdcInt(anchor, "setting", 2) + 1) % RecipeStore.SETTINGS.length;
         anchor.getPersistentDataContainer().set(plugin.key("setting"), PersistentDataType.INTEGER, setting);
         applyDialAngle(anchor);
         anchor.getWorld().playSound(anchor.getLocation(), Sound.BLOCK_COMPARATOR_CLICK, 1f, 0.7f);
-        anchor.getWorld().playSound(anchor.getLocation(), Sound.BLOCK_IRON_TRAPDOOR_CLOSE, 0.5f, 1.5f);
         player.sendActionBar(Component.text("SCP-914: " + RecipeStore.SETTING_NAMES[setting],
             NamedTextColor.GRAY, TextDecoration.ITALIC));
     }
 
-    /** The knob turns: -60..+60 degrees across the five settings. */
     private void applyDialAngle(Marker anchor) {
         int setting = pdcInt(anchor, "setting", 2);
         for (Entity part : partsOf(anchor)) {
@@ -240,6 +361,38 @@ public final class MachineManager {
         }
     }
 
+    /** THE KEY. Items wait in the intake until this is turned - then they go. */
+    public void turnKey(Player player, Marker anchor) {
+        if (jobs.containsKey(anchor.getUniqueId())) {
+            player.sendActionBar(Component.text("The machine is running.", NamedTextColor.GRAY, TextDecoration.ITALIC));
+            return;
+        }
+        Location at = anchor.getLocation();
+        Location intake = at.clone().add(rotate(parseVector(pdcString(anchor, "intake", "-3,0.4,0")), at.getYaw()));
+        List<Item> waiting = new ArrayList<>();
+        for (Entity entity : at.getWorld().getNearbyEntities(intake, 1.3, 1.3, 1.3)) {
+            if (entity instanceof Item item) waiting.add(item);
+        }
+        if (waiting.isEmpty()) {
+            player.sendActionBar(Component.text("The intake is empty.", NamedTextColor.GRAY, TextDecoration.ITALIC));
+            anchor.getWorld().playSound(intake, Sound.BLOCK_DISPENSER_FAIL, 0.7f, 0.8f);
+            return;
+        }
+        Job job = new Job();
+        job.doneAt = tick + REFINE_TICKS;
+        for (Item item : waiting) {
+            job.inputs.add(item.getItemStack().clone());
+            item.remove(); // NOW they disappear - not before
+        }
+        jobs.put(anchor.getUniqueId(), job);
+        setModelState(anchor, TAG_KEY, Material.TRIPWIRE_HOOK, "scp914_key_turned");
+        setModelState(anchor, TAG_BODY, Material.SMITHING_TABLE, "scp914_body_closed");
+        sealChambers(anchor);
+        at.getWorld().playSound(at, Sound.BLOCK_TRIPWIRE_CLICK_ON, 1f, 0.6f);
+        at.getWorld().playSound(at, Sound.BLOCK_IRON_DOOR_CLOSE, 1f, 0.6f);
+        at.getWorld().playSound(at, Sound.BLOCK_PISTON_CONTRACT, 1f, 0.5f);
+    }
+
     // ------------------------------------------------------------- refining
 
     /** Called every 10 ticks by the scheduler. */
@@ -247,57 +400,49 @@ public final class MachineManager {
         tick += 10;
         for (World world : Bukkit.getWorlds()) {
             for (Marker anchor : world.getEntitiesByClass(Marker.class)) {
-                if (anchor.getScoreboardTags().contains(TAG_ANCHOR)) tickMachine(anchor);
+                if (!anchor.getScoreboardTags().contains(TAG_ANCHOR)) continue;
+                Job job = jobs.get(anchor.getUniqueId());
+                if (job == null) continue;
+                if (tick < job.doneAt) {
+                    runningEffects(anchor);
+                } else {
+                    finish(anchor, job);
+                }
             }
         }
     }
 
-    private void tickMachine(Marker anchor) {
-        Job job = jobs.get(anchor.getUniqueId());
+    private void runningEffects(Marker anchor) {
         Location at = anchor.getLocation();
-        Vector intakeOffset = rotate(parseVector(pdcString(anchor, "intake", "-2.6,0.4,0")), at.getYaw());
-        Location intake = at.clone().add(intakeOffset);
-        if (job == null) {
-            List<Item> waiting = new ArrayList<>();
-            for (Entity entity : at.getWorld().getNearbyEntities(intake, 1.1, 1.1, 1.1)) {
-                if (entity instanceof Item item && item.getPickupDelay() < 30) waiting.add(item);
-            }
-            if (waiting.isEmpty()) return;
-            job = new Job();
-            job.doneAt = tick + 80; // ~4 seconds of machinery
-            for (Item item : waiting) {
-                job.inputs.add(item.getItemStack().clone());
-                item.remove();
-            }
-            jobs.put(anchor.getUniqueId(), job);
-            at.getWorld().playSound(intake, Sound.BLOCK_IRON_TRAPDOOR_CLOSE, 1f, 0.8f);
-            int count = job.inputs.stream().mapToInt(ItemStack::getAmount).sum();
-            for (Player nearby : at.getNearbyPlayers(8)) {
-                nearby.sendActionBar(Component.text("SCP-914 accepts " + count + " item(s).",
-                    NamedTextColor.GRAY, TextDecoration.ITALIC));
-            }
-            return;
-        }
-        if (tick < job.doneAt) {
-            // the gears do their work
-            at.getWorld().playSound(at, tick % 20 == 0
-                ? Sound.BLOCK_GRINDSTONE_USE : Sound.BLOCK_PISTON_EXTEND, 0.8f, 0.6f);
-            at.getWorld().spawnParticle(Particle.CRIT, at.clone().add(0, 1.2, 0), 5, 1.2, 0.6, 1.2, 0.05);
-            return;
-        }
+        Sound sound = switch ((tick / 10) % 4) {
+            case 0 -> Sound.BLOCK_GRINDSTONE_USE;
+            case 1 -> Sound.BLOCK_PISTON_EXTEND;
+            case 2 -> Sound.BLOCK_ANVIL_STEP;
+            default -> Sound.BLOCK_SMITHING_TABLE_USE;
+        };
+        at.getWorld().playSound(at, sound, 0.9f, 0.55f);
+        at.getWorld().spawnParticle(Particle.CRIT, at.clone().add(0, 1.5, 0), 6, 1.4, 0.8, 1.4, 0.05);
+        at.getWorld().spawnParticle(Particle.SMOKE, at.clone().add(0, 2.6, 0), 2, 0.2, 0.2, 0.2, 0.01);
+    }
+
+    private void finish(Marker anchor, Job job) {
         jobs.remove(anchor.getUniqueId());
+        Location at = anchor.getLocation();
         int setting = pdcInt(anchor, "setting", 2);
         String settingKey = RecipeStore.SETTINGS[setting];
-        Vector outputOffset = rotate(parseVector(pdcString(anchor, "output", "2.6,0.6,0")), at.getYaw());
+        Vector outputOffset = rotate(parseVector(pdcString(anchor, "output", "3,0.6,0")), at.getYaw());
         Location output = at.clone().add(outputOffset);
         for (ItemStack input : job.inputs) {
-            ItemStack result = plugin.recipes().refine(settingKey, input);
-            ItemStack out = result != null ? result : input; // unknown: passes through
+            ItemStack out = plugin.recipes().refine(settingKey, input);
             at.getWorld().dropItem(output, out, item -> {
-                item.setPickupDelay(20);
-                item.setVelocity(outputOffset.clone().normalize().multiply(0.12).setY(0.15));
+                item.setPickupDelay(15);
+                item.setVelocity(new Vector(0, 0.1, 0));
             });
         }
+        unsealChambers(anchor);
+        setModelState(anchor, TAG_KEY, Material.TRIPWIRE_HOOK, "scp914_key");
+        setModelState(anchor, TAG_BODY, Material.SMITHING_TABLE, "scp914_body");
+        at.getWorld().playSound(at, Sound.BLOCK_IRON_DOOR_OPEN, 1f, 0.7f);
         at.getWorld().playSound(output, Sound.BLOCK_ANVIL_USE, 0.7f, 1.4f);
         at.getWorld().playSound(output, Sound.BLOCK_NOTE_BLOCK_BELL, 0.8f, 1.2f);
     }
@@ -307,31 +452,27 @@ public final class MachineManager {
     public void updateBody(Marker anchor, Double scale, Vector offset) {
         var pdc = anchor.getPersistentDataContainer();
         if (scale != null) pdc.set(plugin.key("scale"), PersistentDataType.DOUBLE, scale);
-        if (offset != null) pdc.set(plugin.key("offset"), PersistentDataType.STRING,
-            offset.getX() + "," + offset.getY() + "," + offset.getZ());
+        if (offset != null) pdc.set(plugin.key("offset"), PersistentDataType.STRING, csv(offset));
         spawnParts(anchor);
     }
 
-    public void updateDial(Marker anchor, Double scale, Vector offset) {
+    public void updateControl(Marker anchor, String prefix, Double scale, Vector offset) {
         var pdc = anchor.getPersistentDataContainer();
-        if (scale != null) pdc.set(plugin.key("dial-scale"), PersistentDataType.DOUBLE, scale);
-        if (offset != null) pdc.set(plugin.key("dial-offset"), PersistentDataType.STRING,
-            offset.getX() + "," + offset.getY() + "," + offset.getZ());
+        if (scale != null) pdc.set(plugin.key(prefix + "-scale"), PersistentDataType.DOUBLE, scale);
+        if (offset != null) pdc.set(plugin.key(prefix + "-offset"), PersistentDataType.STRING, csv(offset));
         spawnParts(anchor);
     }
 
     public void updateZone(Marker anchor, String zone, Vector offset) {
-        anchor.getPersistentDataContainer().set(plugin.key(zone), PersistentDataType.STRING,
-            offset.getX() + "," + offset.getY() + "," + offset.getZ());
+        anchor.getPersistentDataContainer().set(plugin.key(zone), PersistentDataType.STRING, csv(offset));
+    }
+
+    private static String csv(Vector v) {
+        return v.getX() + "," + v.getY() + "," + v.getZ();
     }
 
     private static float snapYaw(float yaw) {
         return Math.round(yaw / 90f) * 90f;
-    }
-
-    private static boolean isAlongX(float yaw) {
-        int snapped = Math.floorMod(Math.round(yaw / 90f), 4);
-        return snapped == 0 || snapped == 2; // facing south/north: width runs east-west
     }
 
     /** Rotate a machine-local offset (x = right, z = forward) by the yaw. */
@@ -344,8 +485,8 @@ public final class MachineManager {
             .add(new Vector(0, local.getY(), 0));
     }
 
-    private static Vector parseVector(String csv) {
-        String[] parts = csv.split(",");
+    private static Vector parseVector(String csvValue) {
+        String[] parts = csvValue.split(",");
         return new Vector(Double.parseDouble(parts[0]),
             Double.parseDouble(parts[1]), Double.parseDouble(parts[2]));
     }

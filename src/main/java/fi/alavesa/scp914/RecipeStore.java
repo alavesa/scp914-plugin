@@ -1,5 +1,9 @@
 package fi.alavesa.scp914;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.inventory.ItemStack;
@@ -107,7 +111,11 @@ public final class RecipeStore {
         return Math.max(1, table.get(setting).size());
     }
 
-    /** The refinement itself. Null = no recipe (the item passes through 1:1). */
+    /**
+     * The refinement itself. With a recipe: the configured output (count
+     * scaled by input count). Without one: Rough and Coarse grind ANYTHING
+     * into Dust; the other settings pass the item through unchanged.
+     */
     public ItemStack refine(String setting, ItemStack input) {
         String key = matchKey(input);
         for (List<Recipe> page : table.get(setting)) {
@@ -120,6 +128,19 @@ public final class RecipeStore {
                 }
             }
         }
-        return null;
+        if (setting.equals("rough") || setting.equals("coarse")) {
+            return dust(input.getAmount());
+        }
+        return input.clone();
+    }
+
+    /** What Rough and Coarse make of everything they don't recognize. */
+    public static ItemStack dust(int amount) {
+        ItemStack item = new ItemStack(Material.GUNPOWDER, Math.min(64, Math.max(1, amount)));
+        var meta = item.getItemMeta();
+        meta.itemName(Component.text("Dust", NamedTextColor.GRAY)
+            .decoration(TextDecoration.ITALIC, false));
+        item.setItemMeta(meta);
+        return item;
     }
 }

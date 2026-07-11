@@ -30,9 +30,11 @@ public final class Scp914Plugin extends JavaPlugin {
         getConfig().addDefault("body.scale", 3.0);
         getConfig().addDefault("body.offset", "0,1.5,0");
         getConfig().addDefault("dial.scale", 1.0);
-        getConfig().addDefault("dial.offset", "0,1.0,1.9");
-        getConfig().addDefault("intake", "-2.6,0.4,0");
-        getConfig().addDefault("output", "2.6,0.6,0");
+        getConfig().addDefault("dial.offset", "-0.9,1.0,1.9");
+        getConfig().addDefault("key.scale", 1.0);
+        getConfig().addDefault("key.offset", "0.9,1.0,1.9");
+        getConfig().addDefault("intake", "-3,0.4,0");
+        getConfig().addDefault("output", "3,0.6,0");
         getConfig().addDefault("barriers.width", 5);
         getConfig().addDefault("barriers.height", 3);
         getConfig().addDefault("barriers.depth", 3);
@@ -84,13 +86,15 @@ public final class Scp914Plugin extends JavaPlugin {
                 try {
                     switch (args[1].toLowerCase(Locale.ROOT)) {
                         case "scale" -> machines.updateBody(anchor, Double.parseDouble(args[2]), null);
-                        case "dial-scale" -> machines.updateDial(anchor, Double.parseDouble(args[2]), null);
+                        case "dial-scale" -> machines.updateControl(anchor, "dial", Double.parseDouble(args[2]), null);
+                        case "key-scale" -> machines.updateControl(anchor, "key", Double.parseDouble(args[2]), null);
                         case "offset" -> machines.updateBody(anchor, null, vector(args));
-                        case "dial-offset" -> machines.updateDial(anchor, null, vector(args));
+                        case "dial-offset" -> machines.updateControl(anchor, "dial", null, vector(args));
+                        case "key-offset" -> machines.updateControl(anchor, "key", null, vector(args));
                         case "intake" -> machines.updateZone(anchor, "intake", vector(args));
                         case "output" -> machines.updateZone(anchor, "output", vector(args));
                         default -> { return error(sender,
-                            "set scale|dial-scale <v> or set offset|dial-offset|intake|output <x> <y> <z>"); }
+                            "set scale|dial-scale|key-scale <v> or set offset|dial-offset|key-offset|intake|output <x> <y> <z>"); }
                     }
                 } catch (Exception e) {
                     return error(sender, "Numbers, please.");
@@ -127,8 +131,8 @@ public final class Scp914Plugin extends JavaPlugin {
             case 1 -> filter(Stream.of("place", "remove", "recipes", "set", "barriers"), args[0]);
             case 2 -> switch (args[0].toLowerCase(Locale.ROOT)) {
                 case "recipes" -> filter(Stream.of("rough", "coarse", "1:1", "fine", "veryfine"), args[1]);
-                case "set" -> filter(Stream.of("scale", "dial-scale", "offset", "dial-offset",
-                    "intake", "output"), args[1]);
+                case "set" -> filter(Stream.of("scale", "dial-scale", "key-scale", "offset",
+                    "dial-offset", "key-offset", "intake", "output"), args[1]);
                 default -> List.of();
             };
             default -> List.of();

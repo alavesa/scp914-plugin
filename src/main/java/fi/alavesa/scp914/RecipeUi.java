@@ -142,16 +142,19 @@ public final class RecipeUi implements Listener {
     // ------------------------------------------------------------- the dial
 
     @EventHandler
-    public void onDial(PlayerInteractEntityEvent event) {
+    public void onControl(PlayerInteractEntityEvent event) {
         if (event.getHand() != EquipmentSlot.HAND) return;
         if (!(event.getRightClicked() instanceof Interaction knob)) return;
-        if (!knob.getScoreboardTags().contains(MachineManager.TAG_DIAL)) return;
+        boolean dial = knob.getScoreboardTags().contains(MachineManager.TAG_DIAL);
+        boolean key = knob.getScoreboardTags().contains(MachineManager.TAG_KEY);
+        if (!dial && !key) return;
         event.setCancelled(true);
         String anchorId = knob.getPersistentDataContainer()
             .get(plugin.key("anchor"), PersistentDataType.STRING);
         if (anchorId == null) return;
         if (Bukkit.getEntity(UUID.fromString(anchorId)) instanceof Marker anchor) {
-            plugin.machines().cycleDial(event.getPlayer(), anchor);
+            if (dial) plugin.machines().cycleDial(event.getPlayer(), anchor);
+            else plugin.machines().turnKey(event.getPlayer(), anchor);
         }
     }
 }

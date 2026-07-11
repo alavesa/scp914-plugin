@@ -4,23 +4,23 @@
     "property": "minecraft:custom_model_data",
     "cases": [
       {
-        "when": "scp914_body",
+        "when": "scp914_key",
         "model": {
           "type": "minecraft:model",
-          "model": "scp:entity/scp914_body"
+          "model": "scp:entity/scp914_key"
         }
       },
       {
-        "when": "scp914_body_closed",
+        "when": "scp914_key_turned",
         "model": {
           "type": "minecraft:model",
-          "model": "scp:entity/scp914_body_closed"
+          "model": "scp:entity/scp914_key_turned"
         }
       }
     ],
     "fallback": {
       "type": "minecraft:model",
-      "model": "minecraft:block/smithing_table"
+      "model": "minecraft:item/tripwire_hook"
     }
   }
 }
