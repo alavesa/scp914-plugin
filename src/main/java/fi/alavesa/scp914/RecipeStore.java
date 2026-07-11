@@ -26,7 +26,8 @@ public final class RecipeStore {
     public static final String[] SETTINGS = {"rough", "coarse", "one_to_one", "fine", "very_fine"};
     public static final String[] SETTING_NAMES = {"Rough", "Coarse", "1:1", "Fine", "Very Fine"};
 
-    public record Recipe(ItemStack input, ItemStack output) { }
+    /** One row: an input and its outputs - each output is one raffle ticket. */
+    public record Recipe(ItemStack input, List<ItemStack> outputs) { }
 
     private final Scp914Plugin plugin;
     private final File file;
@@ -62,8 +63,14 @@ public final class RecipeStore {
                 if (pageSection == null) continue;
                 for (String index : pageSection.getKeys(false)) {
                     ItemStack in = pageSection.getItemStack(index + ".input");
-                    ItemStack out = pageSection.getItemStack(index + ".output");
-                    if (in != null && out != null) page.add(new Recipe(in, out));
+                    if (in == null) continue;
+                    List<ItemStack> outs = new ArrayList<>();
+                    for (Object raw : pageSection.getList(index + ".outputs", List.of())) {
+                        if (raw instanceof ItemStack stack) outs.add(stack);
+                    }
+                    ItemStack legacy = pageSection.getItemStack(index + ".output");
+                    if (legacy != null) outs.add(legacy); // pre-0.4.2 format
+                    if (!outs.isEmpty()) page.add(new Recipe(in, outs));
                 }
                 pages.add(page);
             }
@@ -79,7 +86,7 @@ public final class RecipeStore {
                 for (Recipe recipe : pages.get(p)) {
                     String base = setting + ".page" + p + "." + index++;
                     yaml.set(base + ".input", recipe.input());
-                    yaml.set(base + ".output", recipe.output());
+                    yaml.set(base + ".outputs", recipe.outputs());
                 }
             }
         }
@@ -125,7 +132,7 @@ public final class RecipeStore {
         for (List<Recipe> page : table.get(setting)) {
             for (Recipe recipe : page) {
                 if (matchKey(recipe.input()).equals(key)) {
-                    options.add(recipe.output());
+                    options.addAll(recipe.outputs());
                 }
             }
         }

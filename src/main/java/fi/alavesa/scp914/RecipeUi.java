@@ -35,7 +35,6 @@ import java.util.UUID;
 public final class RecipeUi implements Listener {
 
     private static final int ROWS = 5;
-    private static final int IN_COLUMN = 1, ARROW_COLUMN = 4, OUT_COLUMN = 7;
     private static final int PREV = 45, INFO = 49, NEXT = 53;
 
     private static final class Holder implements InventoryHolder {
@@ -60,19 +59,19 @@ public final class RecipeUi implements Listener {
             Component.text("SCP-914 - " + RecipeStore.SETTING_NAMES[settingIndex]
                 + " (page " + (page + 1) + ")", NamedTextColor.DARK_AQUA));
         Inventory inv = holder.inventory;
-        for (int slot = 0; slot < 54; slot++) inv.setItem(slot, filler());
+        for (int slot = ROWS * 9; slot < 54; slot++) inv.setItem(slot, filler());
         List<RecipeStore.Recipe> recipes = plugin.recipes().page(setting, page);
-        for (int row = 0; row < ROWS; row++) {
-            inv.setItem(row * 9 + IN_COLUMN,
-                row < recipes.size() ? recipes.get(row).input().clone() : null);
-            inv.setItem(row * 9 + ARROW_COLUMN, arrow());
-            inv.setItem(row * 9 + OUT_COLUMN,
-                row < recipes.size() ? recipes.get(row).output().clone() : null);
+        for (int row = 0; row < ROWS && row < recipes.size(); row++) {
+            RecipeStore.Recipe recipe = recipes.get(row);
+            inv.setItem(row * 9, recipe.input().clone());
+            for (int i = 0; i < 8 && i < recipe.outputs().size(); i++) {
+                inv.setItem(row * 9 + 1 + i, recipe.outputs().get(i).clone());
+            }
         }
         inv.setItem(PREV, button(Material.ARROW,
             page > 0 ? "<- Page " + page : "This is the first page"));
         inv.setItem(INFO, button(Material.WRITABLE_BOOK,
-            "One recipe per row: IN left, OUT right. Same input on several rows = random pick."));
+            "Leftmost slot = input. The rest of the row = outputs; one is drawn at random."));
         inv.setItem(NEXT, button(Material.ARROW, "Page " + (page + 2) + " ->"));
         player.openInventory(inv);
     }
@@ -81,15 +80,6 @@ public final class RecipeUi implements Listener {
         ItemStack item = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
         ItemMeta meta = item.getItemMeta();
         meta.itemName(Component.empty());
-        item.setItemMeta(meta);
-        return item;
-    }
-
-    private ItemStack arrow() {
-        ItemStack item = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
-        ItemMeta meta = item.getItemMeta();
-        meta.itemName(Component.text("refines into ->", NamedTextColor.GREEN)
-            .decoration(TextDecoration.ITALIC, false));
         item.setItemMeta(meta);
         return item;
     }
@@ -104,9 +94,7 @@ public final class RecipeUi implements Listener {
     }
 
     private boolean isEditable(int slot) {
-        if (slot >= ROWS * 9) return false;
-        int column = slot % 9;
-        return column == IN_COLUMN || column == OUT_COLUMN;
+        return slot < ROWS * 9; // every row slot is live: input col 0, outputs 1-8
     }
 
     @EventHandler
@@ -144,16 +132,19 @@ public final class RecipeUi implements Listener {
         List<RecipeStore.Recipe> recipes = new ArrayList<>();
         List<ItemStack> strays = new ArrayList<>();
         for (int row = 0; row < ROWS; row++) {
-            ItemStack input = holder.inventory.getItem(row * 9 + IN_COLUMN);
-            ItemStack output = holder.inventory.getItem(row * 9 + OUT_COLUMN);
+            ItemStack input = holder.inventory.getItem(row * 9);
             boolean hasIn = input != null && !input.getType().isAir();
-            boolean hasOut = output != null && !output.getType().isAir();
-            if (hasIn && hasOut) {
-                recipes.add(new RecipeStore.Recipe(input.clone(), output.clone()));
+            List<ItemStack> outputs = new ArrayList<>();
+            for (int i = 1; i <= 8; i++) {
+                ItemStack out = holder.inventory.getItem(row * 9 + i);
+                if (out != null && !out.getType().isAir()) outputs.add(out.clone());
+            }
+            if (hasIn && !outputs.isEmpty()) {
+                recipes.add(new RecipeStore.Recipe(input.clone(), outputs));
             } else {
                 // half a recipe is not a recipe - hand it back, never delete it
                 if (hasIn) strays.add(input.clone());
-                if (hasOut) strays.add(output.clone());
+                strays.addAll(outputs);
             }
         }
         plugin.recipes().setPage(holder.setting, holder.page, recipes);
