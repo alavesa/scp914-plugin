@@ -1,0 +1,19 @@
+name: Scp914
+version: '0.1.0'
+main: fi.alavesa.scp914.Scp914Plugin
+api-version: '1.21'
+author: Piia Alavesa
+description: SCP-914 - the Clockworks. Refinement machine with in-game recipe UI.
+commands:
+  scp914:
+    description: Place and configure SCP-914
+    usage: |
+      /scp914 place | remove
+      /scp914 recipes <rough|coarse|1:1|fine|veryfine>
+      /scp914 set scale|dial-scale <value>
+      /scp914 set offset|dial-offset|intake|output <x> <y> <z>
+      /scp914 barriers <width> <height> <depth>
+permissions:
+  scp914.admin:
+    description: Manage SCP-914
+    default: op

@@ -1,0 +1,19 @@
+{
+  "model": {
+    "type": "minecraft:select",
+    "property": "minecraft:custom_model_data",
+    "cases": [
+      {
+        "when": "scp914_body",
+        "model": {
+          "type": "minecraft:model",
+          "model": "scp:entity/scp914_body"
+        }
+      }
+    ],
+    "fallback": {
+      "type": "minecraft:model",
+      "model": "minecraft:block/smithing_table"
+    }
+  }
+}
