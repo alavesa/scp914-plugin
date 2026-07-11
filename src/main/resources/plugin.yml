@@ -1,5 +1,5 @@
 name: Scp914
-version: '0.4.0'
+version: '0.4.1'
 main: fi.alavesa.scp914.Scp914Plugin
 api-version: '1.21'
 author: Piia Alavesa

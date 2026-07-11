@@ -112,21 +112,29 @@ public final class RecipeStore {
     }
 
     /**
-     * The refinement itself. With a recipe: the configured output (count
-     * scaled by input count). Without one: Rough and Coarse grind ANYTHING
-     * into Dust; the other settings pass the item through unchanged.
+     * The refinement itself. ALL rows matching the input are collected (across
+     * every page) and one is drawn at random - so the same input on several
+     * rows becomes a chance table: three rows of "Level-1 -> Level-2" and one
+     * of "Level-1 -> Omni" is a 25% Omni. A single row behaves as before.
+     * Without any recipe: Rough and Coarse grind ANYTHING into Dust; the
+     * other settings pass the item through unchanged.
      */
     public ItemStack refine(String setting, ItemStack input) {
         String key = matchKey(input);
+        List<ItemStack> options = new ArrayList<>();
         for (List<Recipe> page : table.get(setting)) {
             for (Recipe recipe : page) {
                 if (matchKey(recipe.input()).equals(key)) {
-                    ItemStack out = recipe.output().clone();
-                    int total = out.getAmount() * input.getAmount();
-                    out.setAmount(Math.min(out.getMaxStackSize(), total));
-                    return out;
+                    options.add(recipe.output());
                 }
             }
+        }
+        if (!options.isEmpty()) {
+            ItemStack out = options.get(
+                java.util.concurrent.ThreadLocalRandom.current().nextInt(options.size())).clone();
+            int total = out.getAmount() * input.getAmount();
+            out.setAmount(Math.min(out.getMaxStackSize(), total));
+            return out;
         }
         if (setting.equals("rough") || setting.equals("coarse")) {
             return dust(input.getAmount());

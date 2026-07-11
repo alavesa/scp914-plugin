@@ -25,29 +25,24 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * The refinement book: one double chest per setting, 15 input -> output pairs
- * per page (columns 0-1, 3-4, 6-7; gray dividers between), page controls on
- * the bottom row. Filling a page? The next-page arrow always offers a fresh
- * one. Contents are saved on close or page turn.
+ * The refinement book, laid out so it cannot be misread: ONE RECIPE PER ROW.
+ * Input in the left slot, an arrow in the middle, output in the right slot -
+ * five rows per page, page controls on the bottom row, and the next-page
+ * arrow always offers a fresh page. Complete rows are saved on close or page
+ * turn (with a count, so you know it happened); half-filled rows are handed
+ * back to you rather than silently discarded.
  */
 public final class RecipeUi implements Listener {
 
-    private static final int[] INPUT_SLOTS;
-    static {
-        List<Integer> slots = new ArrayList<>();
-        for (int row = 0; row < 5; row++) {
-            slots.add(row * 9);
-            slots.add(row * 9 + 3);
-            slots.add(row * 9 + 6);
-        }
-        INPUT_SLOTS = slots.stream().mapToInt(Integer::intValue).toArray();
-    }
+    private static final int ROWS = 5;
+    private static final int IN_COLUMN = 1, ARROW_COLUMN = 4, OUT_COLUMN = 7;
     private static final int PREV = 45, INFO = 49, NEXT = 53;
 
     private static final class Holder implements InventoryHolder {
         final String setting;
         final int page;
         Inventory inventory;
+        boolean saved;
         Holder(String setting, int page) { this.setting = setting; this.page = page; }
         @Override public Inventory getInventory() { return inventory; }
     }
@@ -65,25 +60,36 @@ public final class RecipeUi implements Listener {
             Component.text("SCP-914 - " + RecipeStore.SETTING_NAMES[settingIndex]
                 + " (page " + (page + 1) + ")", NamedTextColor.DARK_AQUA));
         Inventory inv = holder.inventory;
-        for (int slot = 0; slot < 54; slot++) inv.setItem(slot, divider());
+        for (int slot = 0; slot < 54; slot++) inv.setItem(slot, filler());
         List<RecipeStore.Recipe> recipes = plugin.recipes().page(setting, page);
-        for (int i = 0; i < INPUT_SLOTS.length; i++) {
-            int in = INPUT_SLOTS[i];
-            inv.setItem(in, i < recipes.size() ? recipes.get(i).input().clone() : null);
-            inv.setItem(in + 1, i < recipes.size() ? recipes.get(i).output().clone() : null);
+        for (int row = 0; row < ROWS; row++) {
+            inv.setItem(row * 9 + IN_COLUMN,
+                row < recipes.size() ? recipes.get(row).input().clone() : null);
+            inv.setItem(row * 9 + ARROW_COLUMN, arrow());
+            inv.setItem(row * 9 + OUT_COLUMN,
+                row < recipes.size() ? recipes.get(row).output().clone() : null);
         }
-        inv.setItem(PREV, button(Material.ARROW, page > 0
-            ? "Page " + page : "This is the first page"));
+        inv.setItem(PREV, button(Material.ARROW,
+            page > 0 ? "<- Page " + page : "This is the first page"));
         inv.setItem(INFO, button(Material.WRITABLE_BOOK,
-            "Left slot IN, right slot OUT. Saved when closed."));
-        inv.setItem(NEXT, button(Material.ARROW, "Page " + (page + 2)));
+            "One recipe per row: IN left, OUT right. Same input on several rows = random pick."));
+        inv.setItem(NEXT, button(Material.ARROW, "Page " + (page + 2) + " ->"));
         player.openInventory(inv);
     }
 
-    private ItemStack divider() {
+    private ItemStack filler() {
         ItemStack item = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
         ItemMeta meta = item.getItemMeta();
         meta.itemName(Component.empty());
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private ItemStack arrow() {
+        ItemStack item = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
+        ItemMeta meta = item.getItemMeta();
+        meta.itemName(Component.text("refines into ->", NamedTextColor.GREEN)
+            .decoration(TextDecoration.ITALIC, false));
         item.setItemMeta(meta);
         return item;
     }
@@ -97,22 +103,27 @@ public final class RecipeUi implements Listener {
         return item;
     }
 
-    private boolean isPairSlot(int slot) {
-        if (slot >= 45) return false;
+    private boolean isEditable(int slot) {
+        if (slot >= ROWS * 9) return false;
         int column = slot % 9;
-        return column == 0 || column == 1 || column == 3 || column == 4 || column == 6 || column == 7;
+        return column == IN_COLUMN || column == OUT_COLUMN;
     }
 
     @EventHandler
     public void onClick(InventoryClickEvent event) {
         if (!(event.getView().getTopInventory().getHolder() instanceof Holder holder)) return;
-        if (event.getClickedInventory() != event.getView().getTopInventory()) return; // own inv is free
-        int slot = event.getSlot();
-        if (isPairSlot(slot)) return; // editable area
-        event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (event.getClickedInventory() != event.getView().getTopInventory()) {
+            // own inventory stays free, but block shift-clicks: vanilla would
+            // dump the item into an arbitrary top slot
+            if (event.isShiftClick()) event.setCancelled(true);
+            return;
+        }
+        int slot = event.getSlot();
+        if (isEditable(slot)) return;
+        event.setCancelled(true);
         if (slot == NEXT || (slot == PREV && holder.page > 0)) {
-            saveFrom(holder);
+            save(holder, player);
             int page = slot == NEXT ? holder.page + 1 : holder.page - 1;
             plugin.getServer().getScheduler().runTask(plugin,
                 () -> open(player, holder.setting, page));
@@ -121,25 +132,43 @@ public final class RecipeUi implements Listener {
 
     @EventHandler
     public void onClose(InventoryCloseEvent event) {
-        if (event.getInventory().getHolder() instanceof Holder holder) {
-            saveFrom(holder);
+        if (event.getInventory().getHolder() instanceof Holder holder
+            && event.getPlayer() instanceof Player player) {
+            save(holder, player);
         }
     }
 
-    private void saveFrom(Holder holder) {
+    private void save(Holder holder, Player player) {
+        if (holder.saved) return;
+        holder.saved = true;
         List<RecipeStore.Recipe> recipes = new ArrayList<>();
-        for (int in : INPUT_SLOTS) {
-            ItemStack input = holder.inventory.getItem(in);
-            ItemStack output = holder.inventory.getItem(in + 1);
-            if (input != null && !input.getType().isAir()
-                && output != null && !output.getType().isAir()) {
+        List<ItemStack> strays = new ArrayList<>();
+        for (int row = 0; row < ROWS; row++) {
+            ItemStack input = holder.inventory.getItem(row * 9 + IN_COLUMN);
+            ItemStack output = holder.inventory.getItem(row * 9 + OUT_COLUMN);
+            boolean hasIn = input != null && !input.getType().isAir();
+            boolean hasOut = output != null && !output.getType().isAir();
+            if (hasIn && hasOut) {
                 recipes.add(new RecipeStore.Recipe(input.clone(), output.clone()));
+            } else {
+                // half a recipe is not a recipe - hand it back, never delete it
+                if (hasIn) strays.add(input.clone());
+                if (hasOut) strays.add(output.clone());
             }
         }
         plugin.recipes().setPage(holder.setting, holder.page, recipes);
+        for (ItemStack stray : strays) {
+            player.getInventory().addItem(stray).values().forEach(left ->
+                player.getWorld().dropItemNaturally(player.getLocation(), left));
+        }
+        int settingIndex = List.of(RecipeStore.SETTINGS).indexOf(holder.setting);
+        player.sendMessage(Component.text("SCP-914: saved " + recipes.size() + " recipe(s) on "
+            + RecipeStore.SETTING_NAMES[settingIndex] + " page " + (holder.page + 1)
+            + (strays.isEmpty() ? "" : " - " + strays.size() + " incomplete item(s) returned to you"),
+            NamedTextColor.AQUA));
     }
 
-    // ------------------------------------------------------------- the dial
+    // ------------------------------------------------------------- controls
 
     @EventHandler
     public void onControl(PlayerInteractEntityEvent event) {
