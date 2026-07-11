@@ -1,6 +1,8 @@
 package fi.alavesa.scp914;
 
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.title.Title;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
@@ -55,10 +57,20 @@ public final class MachineManager {
     public static final String TAG_KEY = "scp914.key";
 
     private static final int REFINE_TICKS = 15 * 20;
+    private static final int WINDUP_TICKS = 3 * 20;
+
+    /** The refinement blackout: the same full-screen glyph the blink uses. */
+    private static final Title BLACKOUT = Title.title(
+        Component.text("\uE000").font(Key.key("scp", "blink")), Component.empty(),
+        Title.Times.times(java.time.Duration.ZERO,
+            java.time.Duration.ofMillis(2500), java.time.Duration.ofMillis(300)));
 
     private static final class Job {
         List<ItemStack> inputs = new ArrayList<>();
+        List<UUID> occupants = new ArrayList<>();
+        int doorsAt;
         int doneAt;
+        boolean sealed;
     }
 
     private final Scp914Plugin plugin;
@@ -361,31 +373,43 @@ public final class MachineManager {
         }
     }
 
-    /** THE KEY. Items wait in the intake until this is turned - then they go. */
+    /**
+     * THE KEY. Turning it starts the wind-up: a few seconds of machinery
+     * with the doors still OPEN - the window to climb in - and only then do
+     * the doors close on whatever, and whoever, is in the intake.
+     */
     public void turnKey(Player player, Marker anchor) {
         if (jobs.containsKey(anchor.getUniqueId())) {
             player.sendActionBar(Component.text("The machine is running.", NamedTextColor.GRAY, TextDecoration.ITALIC));
             return;
         }
-        Location at = anchor.getLocation();
-        Location intake = at.clone().add(rotate(parseVector(pdcString(anchor, "intake", "-3,0.4,0")), at.getYaw()));
-        List<Item> waiting = new ArrayList<>();
-        for (Entity entity : at.getWorld().getNearbyEntities(intake, 1.3, 1.3, 1.3)) {
-            if (entity instanceof Item item) waiting.add(item);
-        }
-        // an empty intake is no obstacle - the machine refines whatever is
-        // inside when the cycle ends, items or otherwise
         Job job = new Job();
-        job.doneAt = tick + REFINE_TICKS;
-        for (Item item : waiting) {
-            job.inputs.add(item.getItemStack().clone());
-            item.remove(); // NOW they disappear - not before
-        }
+        job.doorsAt = tick + WINDUP_TICKS;
+        job.doneAt = job.doorsAt + REFINE_TICKS;
         jobs.put(anchor.getUniqueId(), job);
         setModelState(anchor, TAG_KEY, Material.TRIPWIRE_HOOK, "scp914_key_turned");
+        Location at = anchor.getLocation();
+        at.getWorld().playSound(at, Sound.BLOCK_TRIPWIRE_CLICK_ON, 1f, 0.6f);
+        at.getWorld().playSound(at, Sound.BLOCK_GRINDSTONE_USE, 0.7f, 0.4f);
+        player.sendActionBar(Component.text("The machine winds up.", NamedTextColor.GRAY, TextDecoration.ITALIC));
+    }
+
+    /** Wind-up over: the doors close on the intake's contents - and occupants. */
+    private void seal(Marker anchor, Job job) {
+        job.sealed = true;
+        Location at = anchor.getLocation();
+        Location intake = at.clone().add(rotate(parseVector(pdcString(anchor, "intake", "-3,0.4,0")), at.getYaw()));
+        for (Entity entity : at.getWorld().getNearbyEntities(intake, 1.4, 1.4, 1.4)) {
+            if (entity instanceof Item item) {
+                job.inputs.add(item.getItemStack().clone());
+                item.remove(); // NOW they disappear - not before
+            }
+        }
+        for (Player inside : intake.getNearbyPlayers(1.4)) {
+            job.occupants.add(inside.getUniqueId());
+        }
         setModelState(anchor, TAG_BODY, Material.SMITHING_TABLE, "scp914_body_closed");
         sealChambers(anchor);
-        at.getWorld().playSound(at, Sound.BLOCK_TRIPWIRE_CLICK_ON, 1f, 0.6f);
         at.getWorld().playSound(at, Sound.BLOCK_IRON_DOOR_CLOSE, 1f, 0.6f);
         at.getWorld().playSound(at, Sound.BLOCK_PISTON_CONTRACT, 1f, 0.5f);
     }
@@ -400,11 +424,36 @@ public final class MachineManager {
                 if (!anchor.getScoreboardTags().contains(TAG_ANCHOR)) continue;
                 Job job = jobs.get(anchor.getUniqueId());
                 if (job == null) continue;
-                if (tick < job.doneAt) {
+                if (!job.sealed && tick >= job.doorsAt) {
+                    seal(anchor, job);
+                } else if (!job.sealed) {
+                    windupEffects(anchor);
+                } else if (tick < job.doneAt) {
                     runningEffects(anchor);
+                    blackout(anchor, job);
                 } else {
                     finish(anchor, job);
                 }
+            }
+        }
+    }
+
+    private void windupEffects(Marker anchor) {
+        Location at = anchor.getLocation();
+        at.getWorld().playSound(at, Sound.BLOCK_PISTON_EXTEND, 0.7f, 0.45f);
+        at.getWorld().playSound(at, Sound.BLOCK_LEVER_CLICK, 0.5f, 0.6f);
+        at.getWorld().spawnParticle(Particle.SMOKE, at.clone().add(0, 2.6, 0), 3, 0.2, 0.2, 0.2, 0.01);
+    }
+
+    /** Whoever is sealed inside sees nothing for fifteen seconds. */
+    private void blackout(Marker anchor, Job job) {
+        if (tick % 20 != 0) return;
+        for (UUID id : job.occupants) {
+            Player inside = Bukkit.getPlayer(id);
+            if (inside != null && inside.isOnline()
+                && inside.getWorld() == anchor.getWorld()
+                && inside.getLocation().distanceSquared(anchor.getLocation()) < 100) {
+                inside.showTitle(BLACKOUT);
             }
         }
     }
@@ -429,9 +478,11 @@ public final class MachineManager {
         String settingKey = RecipeStore.SETTINGS[setting];
         Vector outputOffset = rotate(parseVector(pdcString(anchor, "output", "3,0.6,0")), at.getYaw());
         Location output = at.clone().add(outputOffset);
-        // whoever is inside the intake chamber gets refined too
-        Location intake = at.clone().add(rotate(parseVector(pdcString(anchor, "intake", "-3,0.4,0")), at.getYaw()));
-        for (Player inside : new ArrayList<>(intake.getNearbyPlayers(1.4))) {
+        // the occupants sealed in at door-close emerge in the output booth
+        for (UUID id : job.occupants) {
+            Player inside = Bukkit.getPlayer(id);
+            if (inside == null || !inside.isOnline() || inside.getWorld() != at.getWorld()) continue;
+            inside.clearTitle();
             plugin.playerEffects().refine(settingKey, inside, output.clone().add(0, 0.2, 0));
         }
         for (ItemStack input : job.inputs) {
