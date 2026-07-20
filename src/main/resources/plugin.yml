@@ -1,5 +1,5 @@
 name: Scp914
-version: '0.4.2'
+version: '0.4.3'
 main: fi.alavesa.scp914.Scp914Plugin
 api-version: '1.21'
 description: SCP-914 - the Clockworks. Refinement machine with in-game recipe UI.
