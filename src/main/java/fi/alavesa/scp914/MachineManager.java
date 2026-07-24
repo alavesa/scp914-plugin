@@ -409,6 +409,8 @@ public final class MachineManager {
             job.occupants.add(inside.getUniqueId());
             inside.showTitle(BLACKOUT);   // black immediately on seal, don't wait for the 1s tick
             setBusy(inside, true);         // and yield the credits HUD from the very start (no flicker)
+            inside.addPotionEffect(new org.bukkit.potion.PotionEffect(
+                org.bukkit.potion.PotionEffectType.BLINDNESS, 40, 0, false, false, false));
         }
         setModelState(anchor, TAG_BODY, Material.SMITHING_TABLE, "scp914_body_closed");
         sealChambers(anchor);
@@ -458,6 +460,10 @@ public final class MachineManager {
                 && inside.getLocation().distanceSquared(anchor.getLocation()) < 100) {
                 inside.showTitle(BLACKOUT);
                 setBusy(inside, true);
+                // Real BLINDNESS too: it completes the black screen AND gives Labra's HUD a
+                // timing-proof signal to yield on (a potion effect, not a raced scoreboard flag).
+                inside.addPotionEffect(new org.bukkit.potion.PotionEffect(
+                    org.bukkit.potion.PotionEffectType.BLINDNESS, 40, 0, false, false, false));
             }
         }
     }
@@ -500,6 +506,7 @@ public final class MachineManager {
             if (inside == null || !inside.isOnline() || inside.getWorld() != at.getWorld()) continue;
             inside.clearTitle();
             setBusy(inside, false);   // process done - the credits HUD may draw again
+            inside.removePotionEffect(org.bukkit.potion.PotionEffectType.BLINDNESS);
             plugin.playerEffects().refine(settingKey, inside, output.clone().add(0, 0.2, 0));
         }
         for (ItemStack input : job.inputs) {
