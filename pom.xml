@@ -6,7 +6,7 @@
 
   <groupId>fi.alavesa</groupId>
   <artifactId>scp914-plugin</artifactId>
-  <version>0.4.3</version>
+  <version>0.4.4</version>
   <packaging>jar</packaging>
 
   <name>Scp914</name>
@@ -35,5 +35,11 @@
 
   <build>
     <finalName>Scp914-${project.version}</finalName>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+      </resource>
+    </resources>
   </build>
 </project>

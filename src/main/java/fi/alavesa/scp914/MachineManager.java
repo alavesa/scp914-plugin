@@ -454,8 +454,23 @@ public final class MachineManager {
                 && inside.getWorld() == anchor.getWorld()
                 && inside.getLocation().distanceSquared(anchor.getLocation()) < 100) {
                 inside.showTitle(BLACKOUT);
+                // Tell Labra's credits HUD to yield the title layer, or it overwrites this
+                // full-screen blackout every couple of ticks and the screen flickers.
+                setBusy(inside, true);
             }
         }
+    }
+
+    /** Publish/clear scp914.busy on the main scoreboard so Labra's title HUD yields while
+     *  a player is sealed in the machine (the blackout owns the whole title layer). */
+    private void setBusy(Player p, boolean on) {
+        try {
+            var board = Bukkit.getScoreboardManager().getMainScoreboard();
+            var o = board.getObjective("scp914.busy");
+            if (o == null) o = board.registerNewObjective("scp914.busy",
+                org.bukkit.scoreboard.Criteria.DUMMY, Component.text("scp914.busy"));
+            o.getScore(p.getName()).setScore(on ? 1 : 0);
+        } catch (Exception ignored) { }
     }
 
     private void runningEffects(Marker anchor) {
@@ -483,6 +498,7 @@ public final class MachineManager {
             Player inside = Bukkit.getPlayer(id);
             if (inside == null || !inside.isOnline() || inside.getWorld() != at.getWorld()) continue;
             inside.clearTitle();
+            setBusy(inside, false);   // process done - the credits HUD may draw again
             plugin.playerEffects().refine(settingKey, inside, output.clone().add(0, 0.2, 0));
         }
         for (ItemStack input : job.inputs) {
