@@ -407,6 +407,8 @@ public final class MachineManager {
         }
         for (Player inside : intake.getNearbyPlayers(1.4)) {
             job.occupants.add(inside.getUniqueId());
+            inside.showTitle(BLACKOUT);   // black immediately on seal, don't wait for the 1s tick
+            setBusy(inside, true);         // and yield the credits HUD from the very start (no flicker)
         }
         setModelState(anchor, TAG_BODY, Material.SMITHING_TABLE, "scp914_body_closed");
         sealChambers(anchor);
