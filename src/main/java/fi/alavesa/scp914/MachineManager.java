@@ -447,17 +447,16 @@ public final class MachineManager {
         at.getWorld().spawnParticle(Particle.SMOKE, at.clone().add(0, 2.6, 0), 3, 0.2, 0.2, 0.2, 0.01);
     }
 
-    /** Whoever is sealed inside sees nothing for fifteen seconds. */
+    /** Whoever is sealed inside sees nothing for fifteen seconds. Re-asserted every call
+     *  (every 10 ticks) - both the busy flag AND the blackout title - so the credits HUD
+     *  yields and can't flicker the black screen. */
     private void blackout(Marker anchor, Job job) {
-        if (tick % 20 != 0) return;
         for (UUID id : job.occupants) {
             Player inside = Bukkit.getPlayer(id);
             if (inside != null && inside.isOnline()
                 && inside.getWorld() == anchor.getWorld()
                 && inside.getLocation().distanceSquared(anchor.getLocation()) < 100) {
                 inside.showTitle(BLACKOUT);
-                // Tell Labra's credits HUD to yield the title layer, or it overwrites this
-                // full-screen blackout every couple of ticks and the screen flickers.
                 setBusy(inside, true);
             }
         }
